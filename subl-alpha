@@ -1,0 +1,19 @@
+#!/bin/sh
+# Sublime Text with a translucent background.
+# Usage: subl-alpha [--alpha OPACITY] [--chrome] [subl arguments...]
+#   --alpha OPACITY  editor background opacity, 0 (clear) to 1 (opaque); default 0.5
+#   --chrome         also make the tab bar, sidebar and status bar translucent, using the same opacity
+# Popups, panels and the GTK menu bar always stay opaque.
+while :; do
+	case $1 in
+		--alpha) SUBL_ALPHA=$2; shift 2 ;;
+		--chrome) chrome=1; shift ;;
+		*) break ;;
+	esac
+done
+[ -z "$chrome" ] || SUBL_CHROME=${SUBL_ALPHA:-0.5}
+export SUBL_ALPHA SUBL_CHROME
+
+dir=$(dirname "$(readlink -f "$0")")
+export LD_PRELOAD="$dir/shim.so${LD_PRELOAD:+:$LD_PRELOAD}"
+exec /usr/bin/subl "$@"
