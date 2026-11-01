@@ -1,98 +1,199 @@
-// Translucent editor background for Sublime Text 4: the OpenGL logic shared by the Linux and Windows shims.
+// Translucent Sublime Text: the OpenGL half, shared by Linux and Windows.
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <time.h>
 #include "shim.h"
 
-// Next definition of the function we are currently inside.
+// The real GL function this hook replaces.
 #define NEXT(f) ({ static typeof(&hook_##f) p; p ?: (p = gl_next(#f)); })
 
-// Opacities from the launcher (--editor, --chrome); chrome stays opaque unless asked.
-static float editor_alpha, chrome_alpha;
+// ---- PREFS ----
+#define EDITOR_OPACITY_KEY "\"editor_opacity\""
+#define CHROME_OPACITY_KEY "\"chrome_opacity\""
+#define PATH_SIZE 1024
+#define PREFS_FILE_SIZE 65536
 
-// DWM skips the acrylic backdrop for pixels with alpha at or below about 1%, so on Windows opacity never reaches 0.
+static _Atomic float editor_alpha = 1, chrome_alpha = 1;
+
+// DWM drops the acrylic backdrop at alpha of about 1% or less.
 #ifdef _WIN32
 #define MIN_ALPHA 0.03f
 #else
 #define MIN_ALPHA 0
 #endif
 
-static float opacity(const char *var, float fallback) {
-	const char *env = getenv(var);
-	float a = env ? atof(env) : fallback;
-	return a < MIN_ALPHA ? MIN_ALPHA : a > 1 ? 1 : a;
+// Not a JSON parser: finds "key": number outside // comments. Anything else is opaque.
+static float read_setting(const char *text, const char *key) {
+	for (const char *at = strstr(text, key); at; at = strstr(at + 1, key)) {
+		const char *line = at;
+
+		while (line > text && line[-1] != '\n')
+			line--;
+
+		const char *comment = strstr(line, "//");
+
+		if (comment && comment < at)
+			continue;
+
+		at += strlen(key);
+		at += strspn(at, " \t");
+
+		if (*at++ != ':')
+			continue;
+
+		char *end;
+		float a = strtof(at, &end);
+
+		if (end == at)
+			return 1;
+
+		return a < MIN_ALPHA ? MIN_ALPHA : a > 1 ? 1 : a;
+	}
+
+	return 1;
 }
 
-void shim_init(void) {
-	editor_alpha = opacity("SUBL_EDITOR", 0.5f);
-	chrome_alpha = opacity("SUBL_CHROME", 1);
+static void refresh_prefs(void) {
+	static time_t seen_time;
+	static off_t seen_size = -1;
+	char path[PATH_SIZE], text[PREFS_FILE_SIZE];
+	struct stat st;
+	FILE *f = NULL;
+
+	if (prefs_path(path, sizeof path) && !stat(path, &st))
+		f = fopen(path, "r");
+
+	if (!f) {
+		editor_alpha = chrome_alpha = 1;
+		seen_size = -1;
+		return;
+	}
+
+	if (st.st_mtime == seen_time && st.st_size == seen_size) {
+		fclose(f);
+		return;
+	}
+
+	seen_time = st.st_mtime;
+	seen_size = st.st_size;
+	size_t n = fread(text, 1, sizeof text - 1, f);
+	fclose(f);
+	text[n] = 0;
+	editor_alpha = read_setting(text, EDITOR_OPACITY_KEY);
+	chrome_alpha = read_setting(text, CHROME_OPACITY_KEY);
 }
 
-// Each window has its own GL context reusing the same ids, so the programs we track are ref-counted.
-#define ID(i) ((i) & 0xFFFF)
-static unsigned char solid_shader[0x10000], solid_program[0x10000];
-static unsigned char textured_shader[0x10000], textured_program[0x10000];
-
+// ---- WINDOW ----
+// Give the framebuffer an alpha channel; the OS half makes the window itself translucent.
 void hook_glRenderbufferStorage(GLenum target, GLenum format, GLsizei w, GLsizei h) {
 	NEXT(glRenderbufferStorage)(target, format == GL_RGB8 ? GL_RGBA8 : format, w, h);
 }
 
-// The dual-source blend also writes the destination alpha, which needs a single coverage value; green
-// is the closest match to the per-channel coverage. (Don't also force frag_color.a: it puts solid boxes
-// behind emoji.)
+// ---- TEXT ----
+// Alpha needs a single coverage value; green is the closest to per-channel coverage.
+// (Forcing frag_color.a too puts solid boxes behind emoji.)
 #define TEXT_ALPHA "frag_alpha = alpha;"
 #define TEXT_ALPHA_FIXED "frag_alpha = vec4(alpha.rgb, alpha.g);"
 
-// Copy of src with the text alpha fixed, or NULL if src has nothing to fix.
 static char *fix_text_alpha(const char *src) {
 	const char *at = strstr(src, TEXT_ALPHA);
-	if (!at) return NULL;
+
+	if (!at)
+		return NULL;
+
 	size_t head = at - src, tail = strlen(at + strlen(TEXT_ALPHA));
 	char *copy = malloc(head + strlen(TEXT_ALPHA_FIXED) + tail + 1);
-	if (!copy) return NULL;
+
+	if (!copy)
+		return NULL;
+
 	memcpy(copy, src, head);
 	strcpy(copy + head, TEXT_ALPHA_FIXED);
 	strcpy(copy + head + strlen(TEXT_ALPHA_FIXED), at + strlen(TEXT_ALPHA));
 	return copy;
 }
 
+// ---- SHADERS ----
+// These must match Sublime's shader source; a Sublime update can break them.
+#define SOLID_SHADER_MARKER "tint = texelFetch(instances, gl_InstanceID * 2 + 0)"
+#define TEXTURED_SHADER_MARKER "#define TEXTURED"
+#define GRADIENT_SHADER_MARKER "mix(color1, color2, t)"
+
+// Each window's GL context reuses the same ids, so programs are ref-counted.
+#define ID_COUNT 0x10000
+#define ID(i) ((i) & (ID_COUNT - 1))
+static unsigned char solid_shader[ID_COUNT], solid_program[ID_COUNT];
+static unsigned char textured_shader[ID_COUNT], textured_program[ID_COUNT];
+static unsigned char gradient_shader[ID_COUNT], gradient_program[ID_COUNT];
+
 void hook_glShaderSource(GLuint shader, GLsizei n, const GLchar *const *src, const GLint *len) {
 	const GLchar *patched[n];
 	memcpy(patched, src, sizeof patched);
-	int tint = 0, textured = 0, changed = 0;
+	int tint = 0, textured = 0, gradient = 0, changed = 0;
+
 	for (int i = 0; i < n; i++) {
-		tint |= !!strstr(src[i], "tint = texelFetch(instances, gl_InstanceID * 2 + 0)");
-		textured |= !!strstr(src[i], "#define TEXTURED");
+		tint |= !!strstr(src[i], SOLID_SHADER_MARKER);
+		textured |= !!strstr(src[i], TEXTURED_SHADER_MARKER);
+		gradient |= !!strstr(src[i], GRADIENT_SHADER_MARKER);
 		char *copy = fix_text_alpha(src[i]);
+
 		if (copy) {
 			patched[i] = copy;
 			changed = 1;
 		}
 	}
+
 	solid_shader[ID(shader)] = tint && !textured;
 	textured_shader[ID(shader)] = tint && textured;
+	gradient_shader[ID(shader)] = gradient;
 	NEXT(glShaderSource)(shader, n, patched, changed ? NULL : len);
-	for (int i = 0; i < n; i++)
-		if (patched[i] != src[i]) free((void *)patched[i]);
+
+	for (int i = 0; i < n; i++) {
+		if (patched[i] != src[i])
+			free((void *)patched[i]);
+	}
 }
 
 void hook_glAttachShader(GLuint program, GLuint shader) {
 	solid_program[ID(program)] += solid_shader[ID(shader)];
 	textured_program[ID(program)] += textured_shader[ID(shader)];
+	gradient_program[ID(program)] += gradient_shader[ID(shader)];
 	NEXT(glAttachShader)(program, shader);
 }
 
 void hook_glDeleteProgram(GLuint program) {
-	if (solid_program[ID(program)]) solid_program[ID(program)]--;
-	if (textured_program[ID(program)]) textured_program[ID(program)]--;
+	if (solid_program[ID(program)])
+		solid_program[ID(program)]--;
+
+	if (textured_program[ID(program)])
+		textured_program[ID(program)]--;
+
+	if (gradient_program[ID(program)])
+		gradient_program[ID(program)]--;
+
 	NEXT(glDeleteProgram)(program);
 }
 
-// Sublime uploads a draw's per-instance data (tint, then position and size) right before the draw.
-// Remember the latest upload per thread (one GL context each) instead of reading the buffer back.
-static __thread float last_upload[8];
+// ---- EDITOR vs CHROME ----
+// Sublime uploads a draw's instance data right before drawing it; remember the latest per thread.
+#define SNOOP_FLOATS 8
+#define TINT_FLOATS 4
+static __thread float last_upload[SNOOP_FLOATS];
+
+static int tint_is_white(void) {
+	for (int i = 0; i < TINT_FLOATS; i++) {
+		if (last_upload[i] != 1)
+			return 0;
+	}
+
+	return 1;
+}
 
 static void snoop(const void *data, GLsizeiptr size) {
-	if (data && size >= (GLsizeiptr)sizeof last_upload) memcpy(last_upload, data, sizeof last_upload);
+	if (data && size >= (GLsizeiptr)sizeof last_upload)
+		memcpy(last_upload, data, sizeof last_upload);
 }
 
 void hook_glBufferData(GLenum target, GLsizeiptr size, const void *data, GLenum usage) {
@@ -105,30 +206,46 @@ void hook_glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const
 	NEXT(glBufferSubData)(target, offset, size, data);
 }
 
-// Each editor group starts with an opaque white backing fill covering its text area. The editor's own
-// fills (minimap, background, line highlights, selections) are scissored to a full-height column of
-// that area. Fills touching no group are chrome (tab bar, sidebar, status bar, dividers); fills that
-// overlap a group without being part of it are overlays (autocomplete, palette, panels) and stay opaque.
+// Each editor group starts with a white backing fill. Things in that group's column are editor,
+// things touching no group are chrome, and the rest are overlays (popups, panels) that stay solid.
 #define MAX_GROUPS 16
 static __thread GLint groups[MAX_GROUPS][4];
 static __thread int ngroups;
 
-// Opacity for the solid fill about to be drawn inside scissor box sc.
-static float fill_alpha(const GLint sc[4]) {
-	if (last_upload[0] == 1 && last_upload[1] == 1 && last_upload[2] == 1 && last_upload[3] == 1) {
-		if (ngroups < MAX_GROUPS) memcpy(groups[ngroups++], sc, sizeof groups[0]);
-		return editor_alpha;
-	}
+static void register_group(const GLint sc[4]) {
+	if (ngroups < MAX_GROUPS)
+		memcpy(groups[ngroups++], sc, sizeof groups[0]);
+}
+
+static int rects_overlap(const GLint a[4], const GLint b[4]) {
+	return a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3];
+}
+
+static float region_alpha(const GLint sc[4]) {
 	int overlaps = 0;
+
 	for (int i = 0; i < ngroups; i++) {
 		const GLint *g = groups[i];
-		if (sc[1] == g[1] && sc[3] == g[3] && sc[0] >= g[0] && sc[0] + sc[2] <= g[0] + g[2]) return editor_alpha;
-		overlaps |= sc[0] < g[0] + g[2] && g[0] < sc[0] + sc[2] && sc[1] < g[1] + g[3] && g[1] < sc[1] + sc[3];
+
+		if (sc[1] == g[1] && sc[3] == g[3] && sc[0] >= g[0] && sc[0] + sc[2] <= g[0] + g[2])
+			return editor_alpha;
+
+		overlaps |= rects_overlap(sc, g);
 	}
+
 	return overlaps ? 1 : chrome_alpha;
 }
 
-// GL functions we call but don't replace.
+// Called once per frame, so it also picks up preference changes.
+void hook_glClear(GLbitfield mask) {
+	ngroups = 0;
+	refresh_prefs();
+	NEXT(glClear)(mask);
+}
+
+// ---- DRAW ----
+#define NINE_SLICE_INSTANCES 9
+
 static void (*get_integerv)(GLenum, GLint *);
 static void (*get_floatv)(GLenum, GLfloat *);
 static void (*blend_color)(GLfloat, GLfloat, GLfloat, GLfloat);
@@ -136,7 +253,9 @@ static void (*blend_func)(GLenum, GLenum);
 static void (*blend_func_separate)(GLenum, GLenum, GLenum, GLenum);
 
 static void resolve_gl(void) {
-	if (blend_func_separate) return;
+	if (blend_func_separate)
+		return;
+
 	get_integerv = gl_next("glGetIntegerv");
 	get_floatv = gl_next("glGetFloatv");
 	blend_color = gl_next("glBlendColor");
@@ -144,35 +263,80 @@ static void resolve_gl(void) {
 	blend_func_separate = gl_next("glBlendFuncSeparate");
 }
 
-void hook_glClear(GLbitfield mask) {
-	ngroups = 0;
-	NEXT(glClear)(mask);
+typedef struct {
+	GLint blend[4];
+	GLfloat color[4];
+} BlendState;
+
+static void fade_begin(float a, BlendState *saved) {
+	get_integerv(GL_BLEND_SRC_RGB, &saved->blend[0]);
+	get_integerv(GL_BLEND_DST_RGB, &saved->blend[1]);
+	get_integerv(GL_BLEND_SRC_ALPHA, &saved->blend[2]);
+	get_integerv(GL_BLEND_DST_ALPHA, &saved->blend[3]);
+	get_floatv(GL_BLEND_COLOR, saved->color);
+	blend_color(a, a, a, a);
+	blend_func(GL_CONSTANT_COLOR, GL_ONE_MINUS_SRC_ALPHA);
+}
+
+static void fade_end(const BlendState *saved) {
+	blend_func_separate(saved->blend[0], saved->blend[1], saved->blend[2], saved->blend[3]);
+	blend_color(saved->color[0], saved->color[1], saved->color[2], saved->color[3]);
 }
 
 void hook_glDrawArraysInstanced(GLenum mode, GLint first, GLsizei count, GLsizei instances) {
-	GLint prog, sc[4], blend[4];
-	GLfloat color[4];
+	GLint prog, sc[4];
+	BlendState saved;
 	float a = 1;
 	resolve_gl();
 	get_integerv(GL_CURRENT_PROGRAM, &prog);
-	// Tab backgrounds and the tab bar buttons are 9-slice textures; single textured draws are icons.
-	// Popup shadows and scrollbar thumbs are 9-slices too, but overlap an editor group, so fill_alpha keeps them solid.
-	if (solid_program[ID(prog)] || (textured_program[ID(prog)] && instances == 9)) {
+
+	if (solid_program[ID(prog)]) {
 		get_integerv(GL_SCISSOR_BOX, sc);
-		a = fill_alpha(sc);
+
+		if (tint_is_white()) {
+			register_group(sc);
+			a = editor_alpha;
+		} else {
+			a = region_alpha(sc);
+		}
 	}
-	if (a < 1) {
-		get_integerv(GL_BLEND_SRC_RGB, &blend[0]);
-		get_integerv(GL_BLEND_DST_RGB, &blend[1]);
-		get_integerv(GL_BLEND_SRC_ALPHA, &blend[2]);
-		get_integerv(GL_BLEND_DST_ALPHA, &blend[3]);
-		get_floatv(GL_BLEND_COLOR, color);
-		blend_color(a, a, a, a);
-		blend_func(GL_CONSTANT_COLOR, GL_ONE_MINUS_SRC_ALPHA);
+
+	// Tabs and tab bar buttons are 9-slices (single textured draws are icons); the buttons are
+	// small and square, and stay opaque.
+	if (textured_program[ID(prog)] && instances == NINE_SLICE_INSTANCES) {
+		get_integerv(GL_SCISSOR_BOX, sc);
+
+		if (sc[2] > sc[3])
+			a = region_alpha(sc);
 	}
+
+	if (a < 1)
+		fade_begin(a, &saved);
+
 	NEXT(glDrawArraysInstanced)(mode, first, count, instances);
-	if (a < 1) {
-		blend_func_separate(blend[0], blend[1], blend[2], blend[3]);
-		blend_color(color[0], color[1], color[2], color[3]);
+
+	if (a < 1)
+		fade_end(&saved);
+}
+
+// Drop shadows are gradients drawn without instancing.
+void hook_glDrawArrays(GLenum mode, GLint first, GLsizei count) {
+	GLint prog, sc[4];
+	BlendState saved;
+	float a = 1;
+	resolve_gl();
+	get_integerv(GL_CURRENT_PROGRAM, &prog);
+
+	if (gradient_program[ID(prog)]) {
+		get_integerv(GL_SCISSOR_BOX, sc);
+		a = region_alpha(sc);
 	}
+
+	if (a < 1)
+		fade_begin(a, &saved);
+
+	NEXT(glDrawArrays)(mode, first, count);
+
+	if (a < 1)
+		fade_end(&saved);
 }

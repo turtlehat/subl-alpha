@@ -5,3 +5,4 @@ shim.dll
 *.pdb
 *.sublime-project
 *.sublime-workspace
+attic/

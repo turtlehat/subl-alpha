@@ -1,4 +1,4 @@
-// Shared between the Linux and Windows shims: the OpenGL hooks that make the editor background translucent.
+// Shared by the Linux and Windows shims.
 #pragma once
 
 #ifdef _WIN32
@@ -44,8 +44,7 @@ typedef ptrdiff_t GLsizeiptr, GLintptr;
 #define GL_CONSTANT_COLOR 0x8001
 #endif
 
-// X(return type, name, parameters, arguments): every GL function the shim replaces. shim.c defines
-// hook_<name>; each platform exposes them to Sublime under the real GL names.
+// X(ret, name, params, args): every GL function we replace. shim.c defines hook_<name>.
 #define SHIM_HOOKS(X) \
 	X(void, glRenderbufferStorage, (GLenum target, GLenum format, GLsizei w, GLsizei h), (target, format, w, h)) \
 	X(void, glShaderSource, (GLuint shader, GLsizei n, const GLchar *const *src, const GLint *len), (shader, n, src, len)) \
@@ -54,14 +53,15 @@ typedef ptrdiff_t GLsizeiptr, GLintptr;
 	X(void, glBufferData, (GLenum target, GLsizeiptr size, const void *data, GLenum usage), (target, size, data, usage)) \
 	X(void, glBufferSubData, (GLenum target, GLintptr offset, GLsizeiptr size, const void *data), (target, offset, size, data)) \
 	X(void, glClear, (GLbitfield mask), (mask)) \
+	X(void, glDrawArrays, (GLenum mode, GLint first, GLsizei count), (mode, first, count)) \
 	X(void, glDrawArraysInstanced, (GLenum mode, GLint first, GLsizei count, GLsizei instances), (mode, first, count, instances))
 
 #define SHIM_DECLARE(ret, name, params, args) ret hook_##name params;
 SHIM_HOOKS(SHIM_DECLARE)
 #undef SHIM_DECLARE
 
-// Reads the opacities from the launcher (SUBL_EDITOR, SUBL_CHROME).
-void shim_init(void);
+// Provided by each platform: path of Preferences.sublime-settings, or 0 if unknown.
+int prefs_path(char *buf, size_t size);
 
-// Provided by each platform: the real function behind a GL name.
+// Provided by each platform: the real GL function.
 void *gl_next(const char *name);
