@@ -2,13 +2,13 @@
 
 Makes the background of Sublime Text 4 see-through on Linux and Windows. The text stays solid and sharp.
 
-On Linux it needs a desktop with a compositor (Wayland or X11) and Sublime Text 4 installed at `/usr/bin/subl`. On Windows it needs Sublime Text 4 installed at `C:\Program Files\Sublime Text`; the see-through background is frosted with Windows acrylic.
+On Linux it needs a desktop with a compositor (Wayland or X11) and Sublime Text 4 installed at `/usr/bin/subl`. On Windows it needs Sublime Text 4 installed at `C:\Program Files\Sublime Text`.
 
 ## Install
 
 ### Linux
 
-Build it. You need `gcc`, `make` and the OpenGL development headers (`libglvnd` or `mesa`, depending on your distro).
+You need `gcc`, `make` and the OpenGL development headers (`libglvnd` or `mesa`, depending on your distro) to build it.
 
 ```sh
 make
@@ -27,7 +27,7 @@ zig cc -O2 -municode -o subl-alpha-windows.exe subl-alpha-windows.c
 
 ## Use
 
-Close Sublime, then start it with `./subl-alpha-linux` (Linux) or `.\subl-alpha-windows.exe` (Windows) instead of `subl`:
+Close Sublime, then start it with `./subl-alpha-linux` (Linux) or `.\subl-alpha-windows.exe` (Windows):
 
 ```sh
 ./subl-alpha-linux                  # editor background 50% see-through
@@ -37,11 +37,7 @@ Close Sublime, then start it with `./subl-alpha-linux` (Linux) or `.\subl-alpha-
 ./subl-alpha-linux myfile.txt       # anything else is passed to Sublime
 ```
 
-On Windows the options are the same, and the see-through parts show an acrylic backdrop (opacity never goes fully to 0):
-
-```bat
-.\subl-alpha-windows.exe --editor 0.3 --chrome 0.8
-```
+On Windows the options are the same, the see-through parts show an acrylic backdrop, and opacity never goes fully to 0.
 
 ## License
 
