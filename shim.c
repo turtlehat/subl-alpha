@@ -155,12 +155,12 @@ void hook_glDrawArraysInstanced(GLenum mode, GLint first, GLsizei count, GLsizei
 	float a = 1;
 	resolve_gl();
 	get_integerv(GL_CURRENT_PROGRAM, &prog);
-	if (solid_program[ID(prog)]) {
+	// Tab backgrounds and the tab bar buttons are 9-slice textures; single textured draws are icons.
+	// Popup shadows and scrollbar thumbs are 9-slices too, but overlap an editor group, so fill_alpha keeps them solid.
+	if (solid_program[ID(prog)] || (textured_program[ID(prog)] && instances == 9)) {
 		get_integerv(GL_SCISSOR_BOX, sc);
 		a = fill_alpha(sc);
 	}
-	// Tab backgrounds and other chrome panels are 9-slice textures; single textured draws are icons.
-	if (textured_program[ID(prog)] && instances == 9) a = chrome_alpha;
 	if (a < 1) {
 		get_integerv(GL_BLEND_SRC_RGB, &blend[0]);
 		get_integerv(GL_BLEND_DST_RGB, &blend[1]);
