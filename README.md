@@ -4,11 +4,11 @@ Makes the background of Sublime Text 4 see-through on Linux and Windows. The tex
 
 On Linux it needs a desktop with a compositor (Wayland or X11) and Sublime Text 4 installed at `/usr/bin/subl`. On Windows it needs Sublime Text 4 installed at `C:\Program Files\Sublime Text`; the see-through background is frosted with Windows acrylic.
 
-## Build
+## Install
 
 ### Linux
 
-You need `gcc`, `make` and the OpenGL development headers (`libglvnd` or `mesa`, depending on your distro).
+Build it. You need `gcc`, `make` and the OpenGL development headers (`libglvnd` or `mesa`, depending on your distro).
 
 ```sh
 make
@@ -16,7 +16,9 @@ make
 
 ### Windows
 
-You need [Zig](https://ziglang.org/download/) (`winget install --id zig.zig --exact --source winget`).
+Download `subl-alpha-windows.zip` from the [latest release](https://github.com/turtlehat/subl-alpha/releases/latest) and unzip it. There's nothing to build.
+
+Or build it yourself with [Zig](https://ziglang.org/download/) (`winget install --id zig.zig --exact --source winget`):
 
 ```powershell
 zig cc -O2 -shared -o shim.dll shim.c shim-windows.c -lopengl32 -lgdi32 -luser32
