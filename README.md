@@ -2,7 +2,7 @@
 
 Makes the background of Sublime Text 4 see-through on Linux and Windows. The text stays solid and sharp.
 
-![subl-alpha](screenshots/demo.png)
+![subl-alpha](screenshots/arch-linux-hyprland-editor-50-chrome-85.png)
 
 On Linux it needs a desktop with a compositor (Wayland or X11) and Sublime Text 4 installed at `/usr/bin/subl`. On Windows it needs Sublime Text 4 installed at `C:\Program Files\Sublime Text`.
 
