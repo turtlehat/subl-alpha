@@ -1,3 +1,7 @@
 shim.so
+shim.dll
+*.exe
+*.lib
+*.pdb
 *.sublime-project
 *.sublime-workspace
