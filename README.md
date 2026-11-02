@@ -28,7 +28,7 @@ Or build it yourself with [Zig](https://ziglang.org/download/):
 
 ```powershell
 zig cc -O2 -shared -o shim.dll shim.c shim-windows.c -lopengl32 -lgdi32 -luser32
-zig cc -O2 -municode -o subl-alpha-windows.exe subl-alpha-windows.c
+zig cc -O2 -Wl,--subsystem,windows -municode -o subl-alpha-windows.exe subl-alpha-windows.c
 ```
 
 ## 🚀 Use

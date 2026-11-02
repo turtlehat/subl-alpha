@@ -221,13 +221,19 @@ static int rects_overlap(const GLint a[4], const GLint b[4]) {
 	return a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3];
 }
 
+// Scrollbars inset an editor's fills, so they only need to span most of the group's height.
+static int is_editor_fill(const GLint sc[4], const GLint g[4]) {
+	return sc[0] >= g[0] && sc[0] + sc[2] <= g[0] + g[2] && sc[1] >= g[1] && sc[1] + sc[3] <= g[1] + g[3] &&
+	       sc[3] * 10 >= g[3] * 9;
+}
+
 static float region_alpha(const GLint sc[4]) {
 	int overlaps = 0;
 
 	for (int i = 0; i < ngroups; i++) {
 		const GLint *g = groups[i];
 
-		if (sc[1] == g[1] && sc[3] == g[3] && sc[0] >= g[0] && sc[0] + sc[2] <= g[0] + g[2])
+		if (is_editor_fill(sc, g))
 			return editor_alpha;
 
 		overlaps |= rects_overlap(sc, g);
