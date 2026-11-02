@@ -6,9 +6,13 @@ Makes the background of Sublime Text 4 see-through on Linux and Windows. The tex
 
 *Sublime Text 4 on Arch Linux with Hyprland: editor 50% opaque, chrome 85% opaque.*
 
+![Sublime Text 4 on Windows 11](screenshots/windows-11-editor-33-chrome-50.png)
+
+*Sublime Text 4 on Windows 11: editor 33% opaque, chrome 50% opaque.*
+
 On Linux it needs a desktop with a compositor (Wayland or X11) and Sublime Text 4 installed at `/usr/bin/subl`. On Windows it needs Sublime Text 4 installed at `C:\Program Files\Sublime Text`. Installed somewhere else? Set the `SUBL` environment variable to the `subl` (Linux) or `sublime_text.exe` (Windows) path.
 
-Tested on Linux with builds 4143, 4192 and 4215. Windows is untested. A Sublime update that changes its shaders or OpenGL calls can break it.
+Tested on Linux with builds 4143, 4192 and 4215, and on Windows 11 with build 4214. A Sublime update that changes its shaders or OpenGL calls can break it.
 
 ## 📦 Install
 
